@@ -1,0 +1,192 @@
+{
+  "name": "Extractor de Insertos PDF a Base Enriquecida",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "3f6a1c01-0000-4000-8000-000000000001",
+      "name": "Inicio Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs=require('fs');\nconst path=require('path');\nconst BASE='/pdfs';\nconst STATE='/home/node/.n8n/estado/procesados.json';\nlet done=new Set();\ntry{done=new Set(JSON.parse(fs.readFileSync(STATE,'utf8')));}catch(e){}\nconst out=[];\nfunction walk(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const full=path.join(dir,entry.name);if(entry.isDirectory()){const n=entry.name.toLowerCase();if(n==='procesados'||n==='errores')continue;walk(full);}else if(entry.name.toLowerCase().endsWith('.pdf')){const cat=path.basename(path.dirname(full));const key=cat+'/'+entry.name;if(done.has(key))continue;out.push({json:{fileName:entry.name,categoria:cat,filePath:full},binary:{data:{data:fs.readFileSync(full).toString('base64'),mimeType:'application/pdf',fileName:entry.name}}});}}}\nwalk(BASE);\nreturn out;"
+      },
+      "id": "3f6a1c01-0000-4000-8000-000000000002",
+      "name": "Listar PDFs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "3f6a1c01-0000-4000-8000-000000000003",
+      "name": "Lotes de 10",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-20, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/extract",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $binary.data }}",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "categoria",
+              "value": "={{ $json.categoria }}"
+            },
+            {
+              "name": "filename",
+              "value": "={{ $json.fileName }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3f6a1c01-0000-4000-8000-000000000004",
+      "name": "POST /extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 300],
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const i=$input.first().json;\nconst err=i.status==='error'||!!i.error;\nconst g=(k,d='N/A')=>{const v=i[k];return v===undefined||v===null||v===''?d:v;};\nconst row={'Código':g('Codigo'),'Producto':g('Producto'),'Fabricante':g('Fabricante'),'Carpeta':g('Carpeta'),'Nombre Archivo':g('Nombre_Archivo'),'Analito/Parámetro':g('Analito_Parametro'),'Tecnología':g('Tecnologia'),'Muestra':g('Muestra'),'Volumen Muestra':g('Volumen_Muestra'),'Rango de Medición':g('Rango_Medicion'),'Valor Referencia':g('Valor_Referencia'),'Tiempo Resultado':g('Tiempo_Resultado'),'Precisión Intra':g('Precision_Intra'),'Precisión Inter':g('Precision_Inter'),'Correlación':g('Correlacion'),'Interferencias':g('Interferencias'),'Especificidad':g('Especificidad'),'Estabilidad':g('Estabilidad'),'Almacenamiento':g('Almacenamiento'),'Caducidad':g('Caducidad'),'Calibradores':g('Calibradores'),'Controles':g('Controles'),'Instrumento Compatible':g('Instrumento_Compatible'),'Formato':g('Formato'),'Número de Lote':g('Numero_Lote'),'Fecha Caducidad':g('Fecha_Caducidad'),'Registro Sanitario':g('Registro_Sanitario'),'País Origen':g('Pais_Origen'),'PDF Asociado':g('PDF_Asociado'),'URL PDF':g('URL_PDF'),'Estado Documento':g('Estado_Documento','Vigente'),'Observaciones':g('Observaciones_Tecnicas'),'Fecha Extracción':g('Fecha_Extraccion'),'_carpeta':g('Carpeta'),'_archivo':g('Nombre_Archivo')};\nif(err){row['Estado Documento']='Error';row['Observaciones']='ERROR: '+(i.error||'sin detalle');}\nreturn {json:row};"
+      },
+      "id": "3f6a1c01-0000-4000-8000-000000000005",
+      "name": "Mapear fila",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "TU_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Base",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "3f6a1c01-0000-4000-8000-000000000006",
+      "name": "Append a Base Enriquecida",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [640, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "3f6a1c01-0000-4000-8000-000000000007",
+      "name": "Guardar progreso y mover PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300],
+      "parameters": {
+        "jsCode": "const fs=require('fs');\nconst path=require('path');\nconst FILE='/home/node/.n8n/estado/procesados.json';\nconst items=$input.all();\nlet done=[];\ntry{done=JSON.parse(fs.readFileSync(FILE,'utf8'));}catch(e){}\nconst nuevos=items.map(i=>{const j=i.json;const ok=j['Estado Documento']!=='Error';const key=(j['_carpeta']||'')+'/'+(j['_archivo']||'');return ok&&key.length>2?key:null;}).filter(Boolean);\ndone=Array.from(new Set(done.concat(nuevos)));\nfs.mkdirSync(path.dirname(FILE),{recursive:true});\nfs.writeFileSync(FILE,JSON.stringify(done,null,2));\nfor(const item of items){const j=item.json;const cat=j['_carpeta']||'';const name=j['_archivo']||'';if(cat==='N/A'||name==='N/A'||!cat||!name)continue;const src=path.join('/pdfs',cat,name);const sub=j['Estado Documento']==='Error'?'Errores':'Procesados';const dest=path.join('/pdfs',sub,cat,name);try{fs.mkdirSync(path.dirname(dest),{recursive:true});fs.renameSync(src,dest);}catch(e){}}\nreturn items;"
+      }
+    }
+  ],
+  "connections": {
+    "Inicio Manual": {
+      "main": [
+        [
+          {
+            "node": "Listar PDFs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar PDFs": {
+      "main": [
+        [
+          {
+            "node": "Lotes de 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lotes de 10": {
+      "main": [
+        [
+          {
+            "node": "POST /extract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "POST /extract": {
+      "main": [
+        [
+          {
+            "node": "Mapear fila",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mapear fila": {
+      "main": [
+        [
+          {
+            "node": "Append a Base Enriquecida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append a Base Enriquecida": {
+      "main": [
+        [
+          {
+            "node": "Guardar progreso y mover PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false
+}

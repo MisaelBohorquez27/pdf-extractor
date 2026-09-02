@@ -1,0 +1,30 @@
+2026-09-02 21:55:49,590 INFO MOCK prueba.pdf (categoría: Afias)
+2026-09-02 21:55:54,699 INFO Procesando prueba.pdf (categoría: Afias)
+2026-09-02 21:55:54,701 WARNING EOF marker not found
+2026-09-02 21:55:55,423 ERROR Error procesando prueba.pdf
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/site-packages/pdf2image/pdf2image.py", line 589, in pdfinfo_from_path
+    raise ValueError
+ValueError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/main.py", line 60, in extract_pdf
+    result = ocr.process_pdf(pdf_bytes)
+  File "/app/app/ocr.py", line 62, in process_pdf
+    return {"text": self.ocr_pdf(pdf_bytes), "method": "google_vision"}
+  File "/app/app/ocr.py", line 41, in ocr_pdf
+    images = convert_from_bytes(pdf_bytes, dpi=self.dpi)
+  File "/usr/local/lib/python3.10/site-packages/pdf2image/pdf2image.py", line 358, in convert_from_bytes
+    return convert_from_path(
+  File "/usr/local/lib/python3.10/site-packages/pdf2image/pdf2image.py", line 127, in convert_from_path
+    page_count = pdfinfo_from_path(
+  File "/usr/local/lib/python3.10/site-packages/pdf2image/pdf2image.py", line 598, in pdfinfo_from_path
+    raise PDFPageCountError(
+pdf2image.exceptions.PDFPageCountError: Unable to get page count.
+Syntax Error: Couldn't find trailer dictionary
+Syntax Error: Couldn't find trailer dictionary
+Syntax Error: Couldn't read xref table
+
+2026-09-02 22:03:39,746 INFO MOCK prueba.pdf (categoría: Wondfo)
