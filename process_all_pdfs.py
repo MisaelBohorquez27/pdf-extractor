@@ -10,6 +10,7 @@ de Google Vision generado (.\auth.ps1). El progreso se guarda para reanudar.
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -122,6 +123,17 @@ def guardar_excel(nuevos: list) -> None:
     print(f"    [Excel actualizado: {len(df)} filas -> {EXCEL_PATH}]")
 
 
+def guardar_excel_con_reintentos(nuevos: list, intentos: int = 3) -> bool:
+    for intento in range(1, intentos + 1):
+        try:
+            guardar_excel(nuevos)
+            return True
+        except Exception as exc:
+            print(f"    [AVISO] No se pudo escribir el Excel (intento {intento}/{intentos}): {exc}")
+            time.sleep(5)
+    return False
+
+
 def main() -> None:
     print("INICIANDO PROCESAMIENTO DE PDFS")
     print(f"  Carpeta:  {PDFS_PATH}")
@@ -145,33 +157,40 @@ def main() -> None:
 
     session = requests.Session()
     nuevos = []
+    pendientes_marcar = []
     errores = []
-    try:
-        for i, pdf in enumerate(pendientes, 1):
-            print(f"[{i}/{len(pendientes)}] {pdf['categoria']}/{pdf['filename']}")
-            ok, data = procesar_pdf(pdf, session)
-            if ok:
-                print(f"    OK - Producto: {data.get('Producto', 'N/A')}")
-                nuevos.append(data)
-                progreso["procesados"].append(f"{pdf['categoria']}/{pdf['filename']}")
-            else:
-                print(f"    ERROR: {data}")
-                errores.append({"categoria": pdf["categoria"], "archivo": pdf["filename"], "error": data})
-            if i % 10 == 0:
-                guardar_progreso(progreso)
-            if i % 25 == 0:
-                guardar_excel(nuevos)
-                nuevos = []
-    finally:
-        guardar_progreso(progreso)
-        guardar_excel(nuevos)
+
+    for i, pdf in enumerate(pendientes, 1):
+        print(f"[{i}/{len(pendientes)}] {pdf['categoria']}/{pdf['filename']}")
+        ok, data = procesar_pdf(pdf, session)
+        if ok:
+            print(f"    OK - Producto: {data.get('Producto', 'N/A')}")
+            nuevos.append(data)
+            pendientes_marcar.append(f"{pdf['categoria']}/{pdf['filename']}")
+        else:
+            print(f"    ERROR: {data}")
+            errores.append({"categoria": pdf["categoria"], "archivo": pdf["filename"], "error": data})
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now().isoformat()} {pdf['categoria']}/{pdf['filename']} -> {data}\n")
+
+        if i % 10 == 0 or i == len(pendientes):
+            if pendientes_marcar:
+                if guardar_excel_con_reintentos(nuevos):
+                    progreso["procesados"].extend(pendientes_marcar)
+                    guardar_progreso(progreso)
+                    nuevos = []
+                    pendientes_marcar = []
+                    print(f"    [checkpoint: {len(progreso['procesados'])} procesados en total]")
+                else:
+                    print()
+                    print("NO SE PUDO GUARDAR EL EXCEL.")
+                    print("Si tienes resultados.xlsx abierto en Excel, CIERRALO.")
+                    print("Luego vuelve a ejecutar: python run.py")
+                    print("Continuará desde el ultimo checkpoint sin perder nada.")
+                    break
 
     if errores:
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"\n=== ERRORES {datetime.now().isoformat()} ===\n")
-            for e in errores:
-                f.write(f"{e['categoria']}/{e['archivo']} -> {e['error']}\n")
-        print(f"[ERROR] {len(errores)} PDFs fallaron. Detalle en {LOG_PATH}")
+        print(f"{len(errores)} PDFs fallaron. Detalle en {LOG_PATH}")
 
     print("PROCESO COMPLETADO")
 
