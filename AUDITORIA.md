@@ -1,8 +1,8 @@
 # Auditoría del Proyecto — Extractor de Insertos PDF
 
-**Fecha de auditoría:** 02/09/2026 (actualizada a versión 3.0 OAuth2)
+**Fecha de auditoría:** 02/09/2026 (actualizada a versión 4.0 — procesamiento local sin n8n)
 **Ubicación:** `D:\Trabajo\Meditec\pdf-extractor`
-**Estado general:** 🟡 Código completo y validado — pendiente solo credenciales y datos
+**Estado general:** 🟢 Pipeline completo validado de punta a punta — pendiente token OAuth2 para PDFs escaneados
 
 ---
 
@@ -16,13 +16,13 @@
 | OCR híbrido (texto nativo + Vision) | ✅ Probado | PDF con texto: extrae sin Google; PDF escaneado: pide token |
 | Autenticación OAuth2 (v3.0) | ✅ Implementada | Cliente tipo "web" + token persistente con auto-refresh |
 | Sin dependencia OpenAI | ✅ Confirmado | Llamada REST directa a DeepSeek con `httpx` |
-| Workflow n8n | ✅ Importable | JSON válido, 7 nodos |
-| Script de despliegue | ✅ Listo | `setup.ps1` automatiza build, token y n8n |
-| Token OAuth2 generado | ❌ Pendiente | Falta ejecutar la autenticación interactiva (1 vez) |
+| Procesador local (v4.0, sin n8n) | ✅ Probado | `process_all_pdfs.py` + `run.py` + `verify_setup.py` |
+| Prueba real de punta a punta | ✅ Exitosa | 5 PDFs Afias extraídos y guardados en `resultados.xlsx` |
+| Script de despliegue | ✅ Listo | `setup.ps1` (todo) y `auth.ps1` (solo token OAuth2) |
+| Token OAuth2 generado | ❌ Pendiente | Falta ejecutar `auth.ps1` (login interactivo, 1 vez) |
 | Redirect URI en consola Google | ❌ Pendiente | Falta registrar `http://localhost:8080` |
-| Clave DeepSeek | ⚠️ Placeholder | El `.env` dice literalmente `sk-tu_api_key_aqui` |
-| PDFs | ❌ Pendiente | 0 archivos en `test_pdfs/` |
-| Google Sheet destino | ❌ Pendiente | Falta ID de la hoja "base enriquecida" |
+| Clave DeepSeek | ✅ Real | Verificada con llamada exitosa a la API |
+| PDFs | ✅ Localizados | 923 PDFs en 15 subcarpetas de `Datos para la IA\Insertos` |
 
 ---
 
@@ -187,19 +187,34 @@ real de https://platform.deepseek.com antes de procesar PDFs de verdad.
 
 ---
 
-## 8. Checklist de arranque (orden recomendado)
+## 8. Checklist de arranque (v4.0 — procesamiento local sin n8n)
 
 1. ☐ Registrar `http://localhost:8080` como redirect URI en Google Cloud Console
 2. ☐ Configurar pantalla de consentimiento OAuth (scope cloud-vision) y publicar la app
-3. ☐ Poner la clave real de DeepSeek en `.env`
-4. ☐ Sincronizar `Material para ventas\Insertos` con Google Drive Desktop
-5. ☐ Preparar la hoja "Base" con los 33 encabezados (sección 6)
-6. ☐ Ejecutar `.\setup.ps1` (pide ruta del Drive e ID del Sheet, genera el token OAuth2)
-7. ☐ En n8n (http://localhost:5678): crear credencial Google Sheets OAuth2
-8. ☐ Importar `n8n-workflow.json` y verificar el nodo "Append a Base Enriquecida"
-9. ☐ Prueba piloto: copiar 3–5 PDFs de distintas marcas y ejecutar
-10. ☐ Revisar filas generadas y ajustar prompt si la extracción flojea
-11. ☐ Ejecución completa de los 900
+3. ☐ Ejecutar `.\auth.ps1` → login de Google una vez → genera `oauth/token.json`
+4. ☐ Ejecutar `python verify_setup.py` → debe dar TODO LISTO
+5. ☐ Ejecutar `python run.py` → levanta la API y procesa los 923 PDFs
+6. ☐ Revisar `resultados.xlsx` y `errores.log`
+7. ☐ Re-ejecutar `python run.py` si se interrumpió (reanuda desde `progress.json`)
+
+### Comandos v4.0
+
+```powershell
+python verify_setup.py        # diagnostica qué falta
+.\auth.ps1                    # token OAuth2 de Google (una sola vez)
+python run.py                 # levanta API + procesa todo
+python process_all_pdfs.py    # solo procesar (API ya corriendo)
+```
+
+**Flujo v4.0 (sin n8n):**
+```
+Insertos/ (923 PDFs) → process_all_pdfs.py → API local (/extract)
+  → OCR híbrido (texto nativo gratis / Vision OAuth2 para escaneados)
+  → DeepSeek (JSON 33 campos)
+  → resultados.xlsx (merge incremental, sin duplicados) + errores.log + progress.json
+```
+
+> El workflow `n8n-workflow.json` queda como opción alternativa, ya no es necesario.
 
 ### Comandos útiles
 
