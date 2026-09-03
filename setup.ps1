@@ -20,31 +20,39 @@ if ($LASTEXITCODE -ne 0) { throw "Docker Desktop no está corriendo. Ábrelo y r
 
 if (-not (Test-Path -LiteralPath $DriveFolder)) { throw "No existe la carpeta de PDFs: $DriveFolder" }
 
-# Revisar archivo de credenciales de Google Vision
-$envFile = Join-Path $ProjectDir ".env"
-$gac = ""
-if (Test-Path -LiteralPath $envFile) {
-    $gac = (Get-Content $envFile | Where-Object { $_ -match '^GOOGLE_APPLICATION_CREDENTIALS=' } | ForEach-Object { ($_ -split '=', 2)[1] }).Trim()
+# 1. Preparar credenciales OAuth2 (client_secret.json)
+$secretFile = Get-ChildItem -LiteralPath $ProjectDir -Filter "client_secret*.json" -File | Select-Object -First 1
+$secretPath = Join-Path $ProjectDir "client_secret.json"
+if (-not $secretFile) {
+    throw "No se encontró el archivo client_secret_*.json (descargado de Google Cloud Console). Cópialo a $ProjectDir"
 }
-if (-not $gac -or -not (Test-Path -LiteralPath $gac)) {
-    Write-Warning "No existe el archivo de credenciales de Google Vision: $gac"
-    Write-Warning "Crea un service account en Google Cloud (API Vision habilitada) y actualiza GOOGLE_APPLICATION_CREDENTIALS en el .env"
-    try {
-        New-Item -ItemType File -Path $gac -Force | Out-Null
-        Write-Warning "Se creó un placeholder vacío para poder levantar la API. Los PDFs escaneados NO se procesarán hasta colocar las credenciales reales."
-    } catch {
-        throw "No se pudo crear el placeholder de credenciales. Ajusta GOOGLE_APPLICATION_CREDENTIALS a una ruta válida en el .env"
-    }
+if ($secretFile.Name -ne "client_secret.json") {
+    Copy-Item -LiteralPath $secretFile.FullName -Destination $secretPath -Force
+    Write-Host "Credenciales copiadas a client_secret.json"
 }
 
-# Reemplazar el ID de la hoja en el workflow de n8n
+# 2. Verificar redirect_uris
+$secretJson = Get-Content -LiteralPath $secretPath -Raw | ConvertFrom-Json
+$uris = @()
+if ($secretJson.web) { $uris = $secretJson.web.redirect_uris }
+elseif ($secretJson.installed) { $uris = $secretJson.installed.redirect_uris }
+if (-not ($uris | Where-Object { $_ -match 'localhost|127\.0\.0\.1' })) {
+    Write-Warning "Tu cliente OAuth NO tiene 'http://localhost:8080' registrado."
+    Write-Host "Antes de continuar, ve a: https://console.cloud.google.com/apis/credentials" -ForegroundColor Yellow
+    Write-Host "  -> tu cliente OAuth 2.0 (Web) -> URIs de redireccionamiento autorizados" -ForegroundColor Yellow
+    Write-Host "  -> agrega: http://localhost:8080" -ForegroundColor Yellow
+    $cont = Read-Host "¿Ya lo agregaste? (s/n)"
+    if ($cont -notmatch '^s') { throw "Agrega el redirect URI y vuelve a ejecutar setup.ps1" }
+}
+
+# 3. Reemplazar el ID de la hoja en el workflow de n8n
 $wfPath = Join-Path $ProjectDir "n8n-workflow.json"
 if (Test-Path -LiteralPath $wfPath) {
     (Get-Content -LiteralPath $wfPath -Raw) -replace 'TU_SHEET_ID', $SheetId | Set-Content -LiteralPath $wfPath -NoNewline -Encoding UTF8
     Write-Host "Workflow actualizado con el ID de la hoja."
 }
 
-# Construir y levantar la API
+# 4. Construir y levantar la API
 Write-Host "Construyendo la API (la primera vez puede tardar varios minutos)..."
 Push-Location $ProjectDir
 try {
@@ -54,7 +62,7 @@ try {
     Pop-Location
 }
 
-# Health check
+# 5. Health check
 Write-Host "Esperando a que la API esté lista..."
 $ok = $false
 foreach ($i in 1..12) {
@@ -68,7 +76,29 @@ foreach ($i in 1..12) {
 if (-not $ok) { throw "La API no respondió en http://localhost:8000/health" }
 Write-Host "API lista en http://localhost:8000"
 
-# Levantar n8n con acceso a la carpeta de PDFs
+# 6. Generar token OAuth2 (solo si no existe)
+$tokenPath = Join-Path $ProjectDir "oauth\token.json"
+if (-not (Test-Path -LiteralPath $tokenPath)) {
+    Write-Host ""
+    Write-Host "================ AUTENTICACIÓN OAuth2 (una sola vez) ================" -ForegroundColor Cyan
+    Write-Host "Se abrirá (o copiarás) una URL de Google. Acepta los permisos." -ForegroundColor Cyan
+    Write-Host "Si el navegador no se abre solo, copia la URL que aparezca abajo." -ForegroundColor Cyan
+    Write-Host "=====================================================================" -ForegroundColor Cyan
+    docker run --rm -it `
+        -p 8080:8080 `
+        -v "${ProjectDir}\client_secret.json:/app/client_secret.json:ro" `
+        -v "${ProjectDir}\oauth:/app/oauth" `
+        pdf-extractor-pdf-extractor-api `
+        python /app/generar_token.py
+    if ($LASTEXITCODE -ne 0) { throw "Falló la generación del token OAuth2" }
+    if (-not (Test-Path -LiteralPath $tokenPath)) { throw "No se generó oauth/token.json" }
+    Write-Host "Token OAuth2 generado. Reiniciando la API para que lo cargue..."
+    docker restart pdf-extractor-api | Out-Null
+} else {
+    Write-Host "Token OAuth2 ya existente, se omite la autenticación."
+}
+
+# 7. Levantar n8n con acceso a la carpeta de PDFs
 docker rm -f n8n 2>$null
 docker run -d --name n8n `
     -p 5678:5678 `

@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 
 from .extractor import DeepSeekExtractor
 from .models import ExtractResponse
-from .ocr import HybridOCR
+from .ocr import GoogleVisionOCR
 
 LOG_DIR = os.getenv("LOG_DIR", "/app/logs")
 try:
@@ -33,7 +33,7 @@ logger = logging.getLogger("pdf-extractor")
 
 app = FastAPI(title="PDF Extractor API", version="1.0.0")
 
-ocr = HybridOCR()
+ocr = GoogleVisionOCR()
 extractor = DeepSeekExtractor()
 
 CRITICAL_FIELDS = ("Producto", "Fabricante", "Analito_Parametro")

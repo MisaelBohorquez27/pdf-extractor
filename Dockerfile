@@ -10,8 +10,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+COPY generar_token.py ./
 
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/logs /app/oauth
 
 EXPOSE 8000
 

@@ -1,29 +1,35 @@
 import io
+import logging
 
 from google.cloud import vision
 from pdf2image import convert_from_bytes
 from pypdf import PdfReader
 
+from .oauth2_client import OAuth2VisionClient
 
-class HybridOCR:
+logger = logging.getLogger("pdf-extractor")
+
+
+class GoogleVisionOCR:
     """Extrae texto de un PDF.
 
     Estrategia híbrida:
-    1. Si el PDF tiene capa de texto nativa, se usa esa (gratis y rápido).
-    2. Si no (PDF escaneado/imágenes), se aplica OCR con Google Vision.
+    1. Si el PDF tiene capa de texto nativa, se usa esa (gratis, sin
+       autenticación ni llamadas a Google).
+    2. Si es un PDF escaneado (imágenes), se aplica OCR con Google Vision
+       autenticado por OAuth2 (token generado con generar_token.py).
     """
 
     def __init__(self, min_text_chars: int = 100, max_ocr_pages: int = 15, dpi: int = 200):
         self.min_text_chars = min_text_chars
         self.max_ocr_pages = max_ocr_pages
         self.dpi = dpi
-        self._vision_client = None
-
-    @property
-    def vision_client(self) -> vision.ImageAnnotatorClient:
-        if self._vision_client is None:
-            self._vision_client = vision.ImageAnnotatorClient()
-        return self._vision_client
+        self.oauth = OAuth2VisionClient()
+        if not self.oauth.configured:
+            logger.warning(
+                "OAuth2 sin configurar: los PDFs escaneados no se podrán procesar. "
+                "Revisa GOOGLE_CLIENT_SECRET_FILE o GOOGLE_CLIENT_ID/SECRET."
+            )
 
     def extract_native_text(self, pdf_bytes: bytes) -> str:
         try:
@@ -38,6 +44,13 @@ class HybridOCR:
             return ""
 
     def ocr_pdf(self, pdf_bytes: bytes) -> str:
+        if not self.oauth.configured:
+            raise RuntimeError(
+                "Faltan credenciales OAuth2 (GOOGLE_CLIENT_SECRET_FILE o "
+                "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET)."
+            )
+        client = self.oauth.get_client()
+
         images = convert_from_bytes(pdf_bytes, dpi=self.dpi)
         parts = []
         for i, img in enumerate(images[: self.max_ocr_pages]):
@@ -45,7 +58,7 @@ class HybridOCR:
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
                 image = vision.Image(content=buf.getvalue())
-                response = self.vision_client.text_detection(image=image)
+                response = client.text_detection(image=image)
                 if response.error.message:
                     raise RuntimeError(response.error.message)
                 text = response.text_annotations[0].description if response.text_annotations else ""
