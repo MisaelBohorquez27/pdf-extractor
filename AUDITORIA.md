@@ -1,6 +1,6 @@
 # Auditoría del Proyecto — Extractor de Insertos PDF
 
-**Fecha de auditoría:** 02/09/2026
+**Fecha de auditoría:** 02/09/2026 (actualizada a versión 3.0 OAuth2)
 **Ubicación:** `D:\Trabajo\Meditec\pdf-extractor`
 **Estado general:** 🟡 Código completo y validado — pendiente solo credenciales y datos
 
@@ -10,17 +10,19 @@
 
 | Componente | Estado | Detalle |
 |---|---|---|
-| API FastAPI (código) | ✅ Completo | 4 módulos, 3 endpoints |
-| Imagen Docker | ✅ Construida y probada | `pdf-extractor-pdf-extractor-api:latest` (417 MB) |
+| API FastAPI (código) | ✅ Completo | 5 módulos, 3 endpoints |
+| Imagen Docker | ✅ Construida y probada | `pdf-extractor-pdf-extractor-api:latest` |
 | Endpoints API | ✅ Probados | `/health`, `/extract`, `/extract-mock` OK |
+| OCR híbrido (texto nativo + Vision) | ✅ Probado | PDF con texto: extrae sin Google; PDF escaneado: pide token |
+| Autenticación OAuth2 (v3.0) | ✅ Implementada | Cliente tipo "web" + token persistente con auto-refresh |
 | Sin dependencia OpenAI | ✅ Confirmado | Llamada REST directa a DeepSeek con `httpx` |
 | Workflow n8n | ✅ Importable | JSON válido, 7 nodos |
-| Script de despliegue | ✅ Listo | `setup.ps1` automatiza todo |
-| Credencial Google Vision | ❌ Pendiente | Falta `service-account.json` |
-| Clave DeepSeek | ⚠️ Dudosa | La del `.env` tiene 18 caracteres (parece placeholder) |
+| Script de despliegue | ✅ Listo | `setup.ps1` automatiza build, token y n8n |
+| Token OAuth2 generado | ❌ Pendiente | Falta ejecutar la autenticación interactiva (1 vez) |
+| Redirect URI en consola Google | ❌ Pendiente | Falta registrar `http://localhost:8080` |
+| Clave DeepSeek | ⚠️ Placeholder | El `.env` dice literalmente `sk-tu_api_key_aqui` |
 | PDFs | ❌ Pendiente | 0 archivos en `test_pdfs/` |
 | Google Sheet destino | ❌ Pendiente | Falta ID de la hoja "base enriquecida" |
-| Prueba con PDF real | ❌ Pendiente | No ejecutada aún |
 
 ---
 
@@ -28,17 +30,21 @@
 
 ```
 pdf-extractor/
-├── .env                    (164 B)  Variables de entorno (necesita 2 correcciones)
-├── docker-compose.yml      (390 B)  Orquestación del contenedor API
-├── Dockerfile              (362 B)  Imagen Python 3.10 + poppler-utils
+├── .env                    (114 B)  Variables de entorno (falta clave DeepSeek real)
+├── docker-compose.yml      (495 B)  Orquestación del contenedor API (monta client_secret + oauth)
+├── Dockerfile              (450 B)  Imagen Python 3.10 + poppler-utils + generar_token.py
 ├── n8n-workflow.json     (7,516 B)  Workflow n8n importable (7 nodos)
-├── requirements.txt        (211 B)  11 dependencias Python
-├── setup.ps1             (4,054 B)  Despliegue automatizado en Windows
+├── requirements.txt        (243 B)  12 dependencias Python (incluye google-auth-oauthlib)
+├── setup.ps1             (6,050 B)  Despliegue automatizado (build + token OAuth2 + n8n)
+├── generar_token.py      (4,800 B)  Login OAuth2 interactivo (se ejecuta UNA vez)
+├── client_secret.json                Credenciales OAuth2 tipo "web" (del Google Cloud Console)
+├── oauth/                            Contiene token.json tras la autenticación (gitignored)
 ├── app/
 │   ├── __init__.py           (0 B)
-│   ├── main.py           (3,452 B)  Endpoints /health, /extract, /extract-mock
+│   ├── main.py           (3,400 B)  Endpoints /health, /extract, /extract-mock
 │   ├── models.py         (1,863 B)  33 campos de ExtractResponse
-│   ├── ocr.py            (2,445 B)  OCR híbrido (texto nativo + Google Vision)
+│   ├── ocr.py            (2,600 B)  OCR híbrido (texto nativo + Vision con OAuth2)
+│   ├── oauth2_client.py  (3,300 B)  Carga/refresca token OAuth2 para Vision
 │   └── extractor.py      (5,746 B)  Extracción con DeepSeek (httpx directo)
 ├── logs/                          Logs rotativos del contenedor
 ├── test_pdfs/                     Vacía — para PDFs de prueba
@@ -61,8 +67,9 @@ POST http://host.docker.internal:8000/extract   (multipart: file, categoria, fil
         ▼
 API FastAPI (Docker)
   ├─ 1. OCR híbrido (app/ocr.py):
-  │     · Si el PDF tiene capa de texto → pypdf (GRATIS, sin Vision)
-  │     · Si es escaneado → pdf2image + Google Vision (OCR por página, máx. 15 págs.)
+  │     · Si el PDF tiene capa de texto → pypdf (GRATIS, sin Google, sin token)
+  │     · Si es escaneado → pdf2image + Google Vision con OAuth2 (app/oauth2_client.py:
+  │       token generado 1 vez con generar_token.py, refresco automático al expirar)
   ├─ 2. DeepSeek (app/extractor.py):
   │     · POST directo a https://api.deepseek.com/chat/completions
   │     · response_format json_object + 3 reintentos con backoff
@@ -85,12 +92,15 @@ permite reanudar la ejecución desde donde quedó sin duplicar filas.
 
 | # | Prueba | Resultado |
 |---|---|---|
-| 1 | Build Docker de la imagen | ✅ OK (instaló poppler + 11 paquetes Python) |
+| 1 | Build Docker de la imagen | ✅ OK (instaló poppler + 12 paquetes Python) |
 | 2 | `GET /health` | ✅ `{"status": "ok"}` |
 | 3 | `POST /extract-mock` | ✅ Devuelve fila de ejemplo con categoria y filename |
-| 4 | `POST /extract` (PDF inválido) | ✅ Responde `status:"error"` estructurado, no crashea |
-| 5 | JSON del workflow n8n | ✅ Sintaxis válida, 7 nodos, conexiones consistentes |
-| 6 | Imagen sin paquete `openai` | ✅ `pip list` dentro del contenedor: solo `httpx 0.27.2` |
+| 4 | `POST /extract` con PDF de texto nativo | ✅ OCR por `texto_nativo` sin Google ni token; llegó a DeepSeek (401 por key placeholder, esperado) |
+| 5 | `POST /extract` con PDF sin texto (escaneado) | ✅ Error claro: "No hay token OAuth2 válido. Ejecuta setup.ps1..." |
+| 6 | `generar_token.py` carga el client_secret web | ✅ Config OK, client_id `57557273767-...` |
+| 7 | `Flow.from_client_config` con cliente web | ✅ Genera auth_uri correctamente |
+| 8 | JSON del workflow n8n | ✅ Sintaxis válida, 7 nodos, conexiones consistentes |
+| 9 | Imagen sin paquete `openai` | ✅ Solo `httpx` (DeepSeek por REST directo) |
 
 ### Incidencias encontradas y corregidas durante el desarrollo
 
@@ -108,32 +118,37 @@ permite reanudar la ejecución desde donde quedó sin duplicar filas.
 
 ## 5. Estado de credenciales (PENDIENTE — acción tuya)
 
-### 5.1 Google Vision (`service-account.json`) — ❌ no existe
+### 5.1 Google Vision — OAuth2 con cliente tipo "web" (v3.0)
 
-El `.env` actual apunta a una ruta placeholder:
+La empresa bloqueó la creación de service account keys, así que el proyecto usa
+**OAuth2 con un cliente de aplicación web** (`client_secret.json`, ya copiado al
+proyecto desde el archivo descargado del Google Cloud Console).
+
+**Autenticación:** se ejecuta UNA sola vez. `setup.ps1` levanta un contenedor
+temporal con `generar_token.py` que:
+1. Muestra una URL de Google (o la abre en el navegador)
+2. Tú aceptas los permisos de Vision
+3. El token se guarda en `oauth/token.json` y la API lo refresca solo cuando expira
+
+**Requisito previo (bloqueante):** tu cliente OAuth tiene `redirect_uris` vacío.
+Debes registrar en https://console.cloud.google.com/apis/credentials → tu cliente
+OAuth 2.0 (Web) → "URIs de redireccionamiento autorizados":
 ```
-GOOGLE_APPLICATION_CREDENTIALS=C:\Users\TuUsuario\Desktop\pdf-extractor\service-account.json
+http://localhost:8080
 ```
+Sin esto, Google rechazará el login con `redirect_uri_mismatch` (setup.ps1 lo
+verifica y te lo recuerda).
 
-**Pasos:**
-1. https://console.cloud.google.com → crear/eligir proyecto → habilitar **Cloud Vision API**
-2. IAM y administración → Cuentas de servicio → Crear cuenta de servicio
-3. Rol: **Usuario de API de Vision** → Crear clave → **JSON** → descargar
-4. Renombrar a `service-account.json` y copiar a `D:\Trabajo\Meditec\pdf-extractor\`
-5. Corregir el `.env`:
-   ```
-   GOOGLE_APPLICATION_CREDENTIALS=D:\Trabajo\Meditec\pdf-extractor\service-account.json
-   ```
+**Otros requisitos de la consola de Google:**
+- Pantalla de consentimiento OAuth configurada con el scope `cloud-vision`
+- Si la app está en modo "Pruebas", agrega tu cuenta como usuario de prueba.
+  ⚠️ En modo pruebas los refresh tokens caducan a los 7 días; publica la app
+  (o ponla en Producción) para evitar re-autenticar cada semana.
 
-> Nota: `setup.ps1` crea un placeholder vacío si el archivo no existe (para poder
-> levantar la API en modo mock), pero los PDFs escaneados NO se procesarán hasta
-> colocar las credenciales reales.
+### 5.2 DeepSeek (`DEEPSEEK_API_KEY`) — ⚠️ placeholder confirmado
 
-### 5.2 DeepSeek (`DEEPSEEK_API_KEY`) — ⚠️ verificar
-
-La clave actual en el `.env` tiene **18 caracteres**, longitud atípica para una clave
-real de DeepSeek (suelen empezar con `sk-` y tener ~35). Verificarla en
-https://platform.deepseek.com y reemplazar si es placeholder.
+El `.env` contiene literalmente `sk-tu_api_key_aqui`. Reemplázalo por tu clave
+real de https://platform.deepseek.com antes de procesar PDFs de verdad.
 
 ---
 
@@ -174,12 +189,12 @@ https://platform.deepseek.com y reemplazar si es placeholder.
 
 ## 8. Checklist de arranque (orden recomendado)
 
-1. ☐ Crear `service-account.json` en Google Cloud (sección 5.1)
-2. ☐ Corregir `GOOGLE_APPLICATION_CREDENTIALS` en `.env`
-3. ☐ Verificar `DEEPSEEK_API_KEY` en `.env`
+1. ☐ Registrar `http://localhost:8080` como redirect URI en Google Cloud Console
+2. ☐ Configurar pantalla de consentimiento OAuth (scope cloud-vision) y publicar la app
+3. ☐ Poner la clave real de DeepSeek en `.env`
 4. ☐ Sincronizar `Material para ventas\Insertos` con Google Drive Desktop
 5. ☐ Preparar la hoja "Base" con los 33 encabezados (sección 6)
-6. ☐ Ejecutar `.\setup.ps1` (pide ruta del Drive e ID del Sheet)
+6. ☐ Ejecutar `.\setup.ps1` (pide ruta del Drive e ID del Sheet, genera el token OAuth2)
 7. ☐ En n8n (http://localhost:5678): crear credencial Google Sheets OAuth2
 8. ☐ Importar `n8n-workflow.json` y verificar el nodo "Append a Base Enriquecida"
 9. ☐ Prueba piloto: copiar 3–5 PDFs de distintas marcas y ejecutar
@@ -230,3 +245,9 @@ digitales (no escaneados) no consumen Vision.
    Analito, la fila se marca así en `Estado Documento` para revisión humana.
 5. **Reanudación:** el checkpoint está en `~/.n8n/estado/procesados.json` (dentro del
    volumen del contenedor n8n). Si se borra ese volumen, se pierde el progreso.
+6. **Modo "Pruebas" de la app OAuth:** si la app de Google está en testing, el
+   refresh token caduca a los 7 días y tendrás que re-autenticar. Publícala en
+   Producción (o Interna si es Workspace) para evitarlo.
+7. **Seguridad:** `client_secret.json`, `oauth/token.json` y `.env` están en
+   `.gitignore` — nunca los subas al repositorio. El client_secret se compartió
+   en un chat; si quedó expuesto a terceros, rótalo desde la consola de Google.
