@@ -6,6 +6,8 @@ services:
       - "${API_PORT:-8000}:8000"
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_CLIENT_SECRET_FILE=/app/client_secret.json
       - TOKEN_FILE=/app/oauth/token.json
     volumes:
